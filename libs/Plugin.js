@@ -1,13 +1,14 @@
-import { addDefault, addNamed } from '@babel/helper-module-imports';
-const _path = require('path')
+"use strict";Object.defineProperty(exports, "__esModule", {value: true});var _path = require('path');
 const fs = require('fs');
 const parser = require('@babel/parser');
 const traverse = require('@babel/traverse').default;
+var _helpermoduleimports = require('@babel/helper-module-imports');
 
-function winPath(path) {
-  return path.replace(/\\/g, '/');
+function winPath(path2) {
+  return path2.replace(/\\/g, "/");
 }
-export default class Plugin {
+
+class Plugin {
   constructor(libraryName, types, index = 0) {
     this.libraryName = libraryName;
     this.libraryFileName = libraryName.split('/').concat(['iclient-common']);
@@ -94,6 +95,7 @@ export default class Plugin {
     return {...res, paths: res.path || res.allEs};
   }
   transformPath(path) {
+    // console.log('transformPath', path)
     if(!path || path.includes('index.js')) {
       return path;
     }
@@ -102,7 +104,7 @@ export default class Plugin {
   }
   findPath(library, path, lastPath) {
     lastPath = winPath(lastPath)
-    lastPath = lastPath.includes(`${this.libraryFileName[0]}/${library}/index.js`) ? `${this.libraryFileName[0]}/${library}/index.js`:lastPath
+    lastPath = lastPath.includes(`@supermap/${library}/index.js`) ? `@supermap/${library}/index.js`:lastPath
     const enty = this.dependencyFile.find(item => item.library === library && winPath(item.file) == lastPath);
     const { file, deps } = enty || {};
     return deps ? this.transformPath(deps[path]) : file;
@@ -137,13 +139,13 @@ export default class Plugin {
       return false;
     }
   }
-  traverseCallback(node, dirnames, deps) {
+  traverseCallback(node, dirname, deps) {
     if(!node || !node.source) {
       return;
     }
     const sourceValue = node.source.value;
-    const abspath = _path.join(dirnames, sourceValue, 'index.js');
-    const abspath1 = _path.join(dirnames, sourceValue + '.js');
+    const abspath = _path.join(dirname, sourceValue, 'index.js');
+    const abspath1 = _path.join(dirname, sourceValue + '.js');
     if(this.isFile(abspath)) {
       deps[sourceValue] = winPath(abspath)
     }
@@ -158,7 +160,7 @@ export default class Plugin {
     const libraryFile = `${this.libraryName}/index.js`;
     const commonFile = `${this.libraryFileName[0]}/${this.libraryFileName[2]}`;
     const resolvePath = this.getResolvePath(file);
-    const dirnames = winPath(_path.dirname(resolvePath));
+    const dirname = winPath(_path.dirname(resolvePath));
     const fileContent = fs.readFileSync(resolvePath,'utf-8').toString();
     const ast = parser.parse(fileContent, {sourceType: 'module'});
     const deps = {};
@@ -166,9 +168,9 @@ export default class Plugin {
       deps[`${commonFile}`] = winPath(this.getResolvePath(`${commonFile}/index.js`));
     }
     traverse(ast, {
-      ImportDeclaration: ({node}) => this.traverseCallback(node, dirnames, deps),
-      ExportNamedDeclaration: ({node}) => this.traverseCallback(node, dirnames, deps),
-      ExportAllDeclaration: ({node}) => this.traverseCallback(node, dirnames, deps)
+      ImportDeclaration: ({node}) => this.traverseCallback(node, dirname, deps),
+      ExportNamedDeclaration: ({node}) => this.traverseCallback(node, dirname, deps),
+      ExportAllDeclaration: ({node}) => this.traverseCallback(node, dirname, deps)
     })
     return {file, deps, library};
   }
@@ -191,219 +193,178 @@ export default class Plugin {
     }
     return temp;
   }
-
   getPluginState(state) {
     if (!state[this.pluginStateKey]) {
-      state[this.pluginStateKey] = {}; // eslint-disable-line
+      state[this.pluginStateKey] = {};
     }
     return state[this.pluginStateKey];
   }
-
   importMethod(methodName, file, pluginState) {
+    this.transformedMethodName = null;
+    this.transformToDefaultImport = false;
+    console.log('importMethod', methodName)
     if (!pluginState.selectedMethods[methodName]) {
-      const { path: libraryDirectory, methodName: transformedMethodName, transformToDefaultImport} = this.getLibraryDirectory(this.getLibraryEntryFile(), methodName);
+      let { path: libraryDirectory, methodName: transformedMethodName, transformToDefaultImport} = this.getLibraryDirectory(this.getLibraryEntryFile(), methodName);
       if(!libraryDirectory) {
         throw new Error(`${methodName} not found in "${this.libraryName}"`);
       }
       console.log('------------------------------libraryDirectory', libraryDirectory, methodName, transformedMethodName, transformToDefaultImport )
       const path2 = winPath(_path.join.call(void 0, libraryDirectory));
-      pluginState.selectedMethods[methodName] = transformToDefaultImport ? addDefault.call(void 0, file.path, path2, {nameHint: transformedMethodName}) : addNamed.call(void 0, file.path, transformedMethodName, path2);
+      pluginState.selectedMethods[methodName] = transformToDefaultImport ? _helpermoduleimports.addDefault.call(void 0, file.path, path2, {nameHint: transformedMethodName}) : _helpermoduleimports.addNamed.call(void 0, file.path, transformedMethodName, path2);
     }
     return {...pluginState.selectedMethods[methodName]};
   }
-
-  buildExpressionHandler(node, props, path, state) {
-    const file = (path && path.hub && path.hub.file) || (state && state.file);
-    const { types } = this;
+  buildExpressionHandler(node, props, path2, state) {
+    const file = path2 && path2.hub && path2.hub.file || state && state.file;
+    const {types} = this;
     const pluginState = this.getPluginState(state);
-    props.forEach(prop => {
-      if (!types.isIdentifier(node[prop])) return;
-      if (
-        pluginState.specified[node[prop].name] &&
-        types.isImportSpecifier(path.scope.getBinding(node[prop].name).path)
-      ) {
-        node[prop] = this.importMethod(pluginState.specified[node[prop].name], file, pluginState); // eslint-disable-line
+    props.forEach((prop) => {
+      if (!types.isIdentifier(node[prop]))
+        return;
+      if (pluginState.specified[node[prop].name] && types.isImportSpecifier(path2.scope.getBinding(node[prop].name).path)) {
+        node[prop] = this.importMethod(pluginState.specified[node[prop].name], file, pluginState);
       }
     });
   }
-
-  buildDeclaratorHandler(node, prop, path, state) {
-    const file = (path && path.hub && path.hub.file) || (state && state.file);
-    const { types } = this;
+  buildDeclaratorHandler(node, prop, path2, state) {
+    const file = path2 && path2.hub && path2.hub.file || state && state.file;
+    const {types} = this;
     const pluginState = this.getPluginState(state);
-
-    const checkScope = targetNode =>
-      pluginState.specified[targetNode.name] && // eslint-disable-line
-      path.scope.hasBinding(targetNode.name) && // eslint-disable-line
-      path.scope.getBinding(targetNode.name).path.type === 'ImportSpecifier'; // eslint-disable-line
-
+    const checkScope = (targetNode) => pluginState.specified[targetNode.name] && path2.scope.hasBinding(targetNode.name) && path2.scope.getBinding(targetNode.name).path.type === "ImportSpecifier";
     if (types.isIdentifier(node[prop]) && checkScope(node[prop])) {
-      node[prop] = this.importMethod(pluginState.specified[node[prop].name], file, pluginState); // eslint-disable-line
+      node[prop] = this.importMethod(pluginState.specified[node[prop].name], file, pluginState);
     } else if (types.isSequenceExpression(node[prop])) {
       node[prop].expressions.forEach((expressionNode, index) => {
         if (types.isIdentifier(expressionNode) && checkScope(expressionNode)) {
-          node[prop].expressions[index] = this.importMethod(
-            pluginState.specified[expressionNode.name],
-            file,
-            pluginState,
-          ); // eslint-disable-line
+          node[prop].expressions[index] = this.importMethod(pluginState.specified[expressionNode.name], file, pluginState);
         }
       });
     }
   }
-
-  ProgramEnter(path, state) {
+  ProgramEnter(path2, state) {
     const pluginState = this.getPluginState(state);
     pluginState.specified = Object.create(null);
     pluginState.libraryObjs = Object.create(null);
     pluginState.selectedMethods = Object.create(null);
     pluginState.pathsToRemove = [];
   }
-
-  ProgramExit(path, state) {
-    this.getPluginState(state).pathsToRemove.forEach(p => !p.removed && p.remove());
+  ProgramExit(path2, state) {
+    this.getPluginState(state).pathsToRemove.forEach((p) => !p.removed && p.remove());
   }
-
-  ImportDeclaration(path, state) {
-    const { node } = path;
-
-    // path maybe removed by prev instances.
-    if (!node) return;
-
-    const { value } = node.source;
-    const { libraryName } = this;
-    const { types } = this;
+  ImportDeclaration(path2, state) {
+    const {node} = path2;
+    if (!node)
+      return;
+    const {value} = node.source;
+    const {libraryName} = this;
+    const {types} = this;
     const pluginState = this.getPluginState(state);
     if (value === libraryName) {
-      node.specifiers.forEach(spec => {
+      console.log('------------',value)
+      node.specifiers.forEach((spec) => {
         if (types.isImportSpecifier(spec)) {
           pluginState.specified[spec.local.name] = spec.imported.name;
         } else {
           pluginState.libraryObjs[spec.local.name] = true;
         }
+        
       });
-      pluginState.pathsToRemove.push(path);
+      pluginState.pathsToRemove.push(path2);
     }
   }
-
-  CallExpression(path, state) {
-    const { node } = path;
-    const file = (path && path.hub && path.hub.file) || (state && state.file);
-    const { name } = node.callee;
-    const { types } = this;
+  CallExpression(path2, state) {
+    const {node} = path2;
+    const file = path2 && path2.hub && path2.hub.file || state && state.file;
+    const {name} = node.callee;
+    const {types} = this;
     const pluginState = this.getPluginState(state);
-
     if (types.isIdentifier(node.callee)) {
       if (pluginState.specified[name]) {
         node.callee = this.importMethod(pluginState.specified[name], file, pluginState);
       }
     }
-
-    node.arguments = node.arguments.map(arg => {
-      const { name: argName } = arg;
-      if (
-        pluginState.specified[argName] &&
-        path.scope.hasBinding(argName) &&
-        path.scope.getBinding(argName).path.type === 'ImportSpecifier'
-      ) {
+    node.arguments = node.arguments.map((arg) => {
+      const {name: argName} = arg;
+      if (pluginState.specified[argName] && path2.scope.hasBinding(argName) && path2.scope.getBinding(argName).path.type === "ImportSpecifier") {
         return this.importMethod(pluginState.specified[argName], file, pluginState);
       }
       return arg;
     });
   }
-
-  MemberExpression(path, state) {
-    const { node } = path;
-    const file = (path && path.hub && path.hub.file) || (state && state.file);
+  MemberExpression(path2, state) {
+    const {node} = path2;
+    const file = path2 && path2.hub && path2.hub.file || state && state.file;
     const pluginState = this.getPluginState(state);
-
-    // multiple instance check.
-    if (!node.object || !node.object.name) return;
-
+    if (!node.object || !node.object.name)
+      return;
     if (pluginState.libraryObjs[node.object.name]) {
-      // antd.Button -> _Button
-      path.replaceWith(this.importMethod(node.property.name, file, pluginState));
-    } else if (pluginState.specified[node.object.name] && path.scope.hasBinding(node.object.name)) {
-      const { scope } = path.scope.getBinding(node.object.name);
-      // global variable in file scope
-      if (scope.path.parent.type === 'File') {
+      path2.replaceWith(this.importMethod(node.property.name, file, pluginState));
+    } else if (pluginState.specified[node.object.name] && path2.scope.hasBinding(node.object.name)) {
+      const {scope} = path2.scope.getBinding(node.object.name);
+      if (scope.path.parent.type === "File") {
         node.object = this.importMethod(pluginState.specified[node.object.name], file, pluginState);
       }
     }
   }
-
-  Property(path, state) {
-    const { node } = path;
-    this.buildDeclaratorHandler(node, 'value', path, state);
+  Property(path2, state) {
+    const {node} = path2;
+    this.buildDeclaratorHandler(node, "value", path2, state);
   }
-
-  VariableDeclarator(path, state) {
-    const { node } = path;
-    this.buildDeclaratorHandler(node, 'init', path, state);
+  VariableDeclarator(path2, state) {
+    const {node} = path2;
+    this.buildDeclaratorHandler(node, "init", path2, state);
   }
-
-  ArrayExpression(path, state) {
-    const { node } = path;
+  ArrayExpression(path2, state) {
+    const {node} = path2;
     const props = node.elements.map((_, index) => index);
-    this.buildExpressionHandler(node.elements, props, path, state);
+    this.buildExpressionHandler(node.elements, props, path2, state);
   }
-
-  LogicalExpression(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['left', 'right'], path, state);
+  LogicalExpression(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["left", "right"], path2, state);
   }
-
-  ConditionalExpression(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['test', 'consequent', 'alternate'], path, state);
+  ConditionalExpression(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["test", "consequent", "alternate"], path2, state);
   }
-
-  IfStatement(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['test'], path, state);
-    this.buildExpressionHandler(node.test, ['left', 'right'], path, state);
+  IfStatement(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["test"], path2, state);
+    this.buildExpressionHandler(node.test, ["left", "right"], path2, state);
   }
-
-  ExpressionStatement(path, state) {
-    const { node } = path;
-    const { types } = this;
+  ExpressionStatement(path2, state) {
+    const {node} = path2;
+    const {types} = this;
     if (types.isAssignmentExpression(node.expression)) {
-      this.buildExpressionHandler(node.expression, ['right'], path, state);
+      this.buildExpressionHandler(node.expression, ["right"], path2, state);
     }
   }
-
-  ReturnStatement(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['argument'], path, state);
+  ReturnStatement(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["argument"], path2, state);
   }
-
-  ExportDefaultDeclaration(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['declaration'], path, state);
+  ExportDefaultDeclaration(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["declaration"], path2, state);
   }
-
-  BinaryExpression(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['left', 'right'], path, state);
+  BinaryExpression(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["left", "right"], path2, state);
   }
-
-  NewExpression(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['callee', 'arguments'], path, state);
+  NewExpression(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["callee", "arguments"], path2, state);
   }
-
-  SwitchStatement(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['discriminant'], path, state);
+  SwitchStatement(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["discriminant"], path2, state);
   }
-
-  SwitchCase(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['test'], path, state);
+  SwitchCase(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["test"], path2, state);
   }
-
-  ClassDeclaration(path, state) {
-    const { node } = path;
-    this.buildExpressionHandler(node, ['superClass'], path, state);
+  ClassDeclaration(path2, state) {
+    const {node} = path2;
+    this.buildExpressionHandler(node, ["superClass"], path2, state);
   }
-}
+} exports.default = Plugin;
